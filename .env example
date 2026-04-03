@@ -1,0 +1,4 @@
+# .env
+GROQ_API_KEY=gsk_key
+GEMINI_API_KEY=AI_key
+RANDOM_SEED=42
