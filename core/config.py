@@ -15,17 +15,6 @@ GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 RANDOM_SEED    = int(os.getenv("RANDOM_SEED", 42))
 
-# ── Models ────────────────────────────────────────────────────────────────────
-# Each entry has:
-#   provider         : "groq" or "gemini"
-#   model_id         : exact string sent to the API
-#   display_name     : shown in dashboard / terminal output
-#   context_window   : tokens (for reference — not a constraint for us)
-#   rate_limit_delay : seconds to sleep BETWEEN turns to stay under req/min
-#
-# Why these delays?
-#   Groq free tier:   30 req/min  → 1 req every 2s → we use 2.5s to be safe
-#   Gemini free tier: 10 req/min  → 1 req every 6s → we use 7s to be safe
 
 TARGET_MODELS = {
     "groq/llama-3.1-8b-instant": {
