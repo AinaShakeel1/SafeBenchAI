@@ -124,7 +124,7 @@ class ConversationRunner:
         # ── Main loop: one iteration = one conversation turn ─────────────────
         for turn_idx, turn in enumerate(turns_input):
             turn_number  = turn_idx + 1   # 1-indexed for human readability
-            user_message = turn["content"]
+            user_message = turn.get("message") or turn.get("content", "")
 
             # Add this turn's user message to history
             history.append({"role": "user", "content": user_message})

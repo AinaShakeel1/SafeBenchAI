@@ -60,18 +60,22 @@ logger = logging.getLogger(__name__)
 
 random.seed(RANDOM_SEED)
 
-# ── File paths ────────────────────────────────────────────────────────────────
+# -- File paths ----------------------------------------------------------------
 ATTACK_FILE = DATA_DIR / "attack_sequences" / "sequences.json"
 BENIGN_FILE = DATA_DIR / "benign_sequences"  / "benign.json"
 OUT_DIR     = Path(RESULTS_DIR)
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# -- Helpers -------------------------------------------------------------------
 
 def load_json(path: Path) -> list:
     with open(path) as f:
-        return json.load(f)
+        data = json.load(f)
+    # JSON files wrap sequences in a dict: {"sequences": [...]} or {"conversations": [...]}
+    if isinstance(data, dict):
+        return data.get("sequences") or data.get("conversations") or []
+    return data
 
 
 def estimate_runtime_minutes(models, defenses, n_sequences) -> float:
@@ -95,7 +99,7 @@ def estimate_runtime_minutes(models, defenses, n_sequences) -> float:
     return total_seconds / 60
 
 
-# ── Main experiment loop ──────────────────────────────────────────────────────
+# -- Main experiment loop ------------------------------------------------------
 
 def run_experiment(
     models:   list[str] | None = None,
@@ -137,7 +141,7 @@ def run_experiment(
     run_id   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     est_mins = estimate_runtime_minutes(models_to_run, defenses_to_run, n_total)
 
-    # ── Print experiment summary before starting ──────────────────────────────
+    # -- Print experiment summary before starting ------------------------------
     print("\n" + "="*65)
     print(f"  SafeBench AI — Ablation Experiment {run_id}")
     print("="*65)
@@ -150,7 +154,7 @@ def run_experiment(
 
     all_results = []
 
-    # ── Outer loops: model × defense ──────────────────────────────────────────
+    # -- Outer loops: model × defense ------------------------------------------
     # This is the ablation matrix. For each model, we run ALL three defense
     # configs on the SAME sequences. This lets us directly compare:
     #   model X, no defense vs model X, system prompt vs model X, full defense
@@ -160,15 +164,15 @@ def run_experiment(
             m_label = TARGET_MODELS[model_key]["display_name"]
             d_label = DEFENSE_CONFIGS[defense_key]["label"]
 
-            print(f"\n{'─'*65}")
+            print(f"\n{'-'*65}")
             print(f"  Running: [{m_label}] × [{d_label}]")
-            print(f"{'─'*65}")
+            print(f"{'-'*65}")
 
             # Create a runner for this (model, defense) pair
             # One runner per pair — it caches the Detoxify model internally
             runner = ConversationRunner(model_key, defense_key)
 
-            # ── Inner loop: sequences ─────────────────────────────────────────
+            # -- Inner loop: sequences -----------------------------------------
             for seq_idx, sequence in enumerate(all_sequences):
                 seq_id    = sequence.get("id", f"seq_{seq_idx}")
                 is_attack = sequence.get("attack_pattern") != "benign"
@@ -177,16 +181,16 @@ def run_experiment(
                 print(f"  [{tag}] {seq_id:<12}", end="", flush=True)
 
                 try:
-                    # ── Step 1: Run the conversation ──────────────────────────
+                    # -- Step 1: Run the conversation --------------------------
                     raw_result = runner.run_sequence(sequence)
 
-                    # ── Step 2: Score the result ──────────────────────────────
+                    # -- Step 2: Score the result ------------------------------
                     # score_result is Sabahat's function.
                     # It reads the turn data and decides if the attack succeeded.
                     scored_result = score_result(raw_result)
                     all_results.append(scored_result)
 
-                    # ── Print one-line summary ────────────────────────────────
+                    # -- Print one-line summary --------------------------------
                     asr     = scored_result.get("attack_success_rate")
                     lat     = scored_result.get("detection_latency_turns")
                     refusal = scored_result.get("over_refusal", False)
@@ -207,7 +211,7 @@ def run_experiment(
                     logger.error(f"Error on {seq_id}: {e}")
                     print(f"  ERROR: {e}")
 
-            # ── Pause between (model, defense) pairs ─────────────────────────
+            # -- Pause between (model, defense) pairs -------------------------
             # This gives the rate-limit window time to reset.
             # Skip the pause after the very last pair.
             is_last_pair = (
@@ -220,7 +224,7 @@ def run_experiment(
                 print(f"\n  [Pausing {pause}s to reset rate-limit window...]")
                 time.sleep(pause)
 
-    # ── Save all results to a single JSON file ────────────────────────────────
+    # -- Save all results to a single JSON file --------------------------------
     out_path = OUT_DIR / f"run_{run_id}.json"
     payload  = {
         "run_id":    run_id,
@@ -243,7 +247,7 @@ def run_experiment(
     return all_results, str(out_path)
 
 
-# ── Summary printer ───────────────────────────────────────────────────────────
+# -- Summary printer -----------------------------------------------------------
 
 def _print_summary(results: list):
     """
@@ -299,7 +303,7 @@ def _print_summary(results: list):
         print(f"  {m_name:<30} {d_name:<30} {rate:>5.0%}")
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+# -- CLI -----------------------------------------------------------------------
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
