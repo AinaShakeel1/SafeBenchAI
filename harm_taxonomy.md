@@ -1,10 +1,5 @@
 # SafeBench Harm Taxonomy & Attack-Success Rubric
 
-**Owner:** Sabahat  
-**Version:** 1.0  
-**Status:** Week 1 deliverable — ground truth for all scoring decisions
-
----
 
 ## Purpose
 

@@ -280,6 +280,7 @@ ATTACK_LABELS = {
 MODEL_LABELS = {
     "groq/llama-3.1-8b-instant": "Llama 3.1 8B",
     "groq/llama-3.3-70b-versatile": "Llama 3.3 70B",
+    "groq/llama-4-scout-17b": "Llama 4 Scout 17B",
     "groq/qwen3-32b": "Qwen3 32B",
     "gemini/gemini-2.5-flash": "Gemini 2.5 Flash",
     "groq/phi-3-mini": "Phi-3 Mini",
@@ -301,13 +302,35 @@ ACCENT_PURPLE = "#bc8cff"
 
 @st.cache_data
 def discover_runs():
-    metrics_files = sorted(RESULTS_DIR.glob("*_metrics.json"), reverse=True)
     runs = {}
-    for f in metrics_files:
-        run_id = f.stem.replace("run_", "").replace("_metrics", "")
-        raw_path = RESULTS_DIR / f"run_{run_id}.json"
-        runs[run_id] = {"metrics": f, "raw": raw_path if raw_path.exists() else None}
-    return runs
+
+    # Collect all raw run files first
+    for raw_path in sorted(RESULTS_DIR.glob("run_*.json")):
+        if raw_path.stem.endswith("_metrics"):
+            continue
+        run_id = raw_path.stem.replace("run_", "")
+        metrics_path = RESULTS_DIR / f"run_{run_id}_metrics.json"
+
+        # Auto-generate missing metrics files from raw data
+        if not metrics_path.exists():
+            try:
+                with open(raw_path, encoding="utf-8") as f:
+                    raw = json.load(f)
+                if not raw.get("results"):
+                    continue  # skip empty/aborted runs
+                from scoring.aggregator import aggregate
+                metrics = aggregate(raw)
+                with open(metrics_path, "w", encoding="utf-8") as f:
+                    json.dump(metrics, f, indent=2)
+            except Exception:
+                continue  # skip runs that can't be aggregated
+
+        if metrics_path.exists():
+            runs[run_id] = {"metrics": metrics_path, "raw": raw_path}
+
+    # Sort newest first
+    return dict(sorted(runs.items(), reverse=True))
+
 
 @st.cache_data
 def load_metrics(run_id: str, path: str) -> dict:
@@ -413,47 +436,39 @@ def render_sidebar(runs):
 
 # ─── Tab 1: Overview ──────────────────────────────────────────────────────────
 
-def tab_overview(metrics, filters):
-    # Key metrics row
-    asr_vals = [
-        v["asr"]
-        for k, v in metrics["asr_by_model_defense"].items()
-        if v["model"] in filters["models"] and v["defense"] in filters["defenses"]
-    ]
-    avg_asr = np.mean(asr_vals) if asr_vals else 0
-    max_asr = max(asr_vals) if asr_vals else 0
-    min_asr = min(asr_vals) if asr_vals else 0
+def tab_overview(metrics, filters, filters_active=True):
+    # KPI cards always use ALL data regardless of filters
+    all_asr = [v["asr"] for v in metrics["asr_by_model_defense"].values()]
+    max_asr = max(all_asr) if all_asr else 0
 
     dl = metrics.get("detection_latency", {})
-    mean_latency = dl.get("mean_latency", 0)
-    never_detected = dl.get("never_detected", 0)
+    mean_latency = dl.get("mean_latency") or 0
     n_attack = metrics.get("n_attack", 0)
     n_benign = metrics.get("n_benign", 0)
 
-    over_ref_vals = [
-        v["over_refusal_rate"]
-        for k, v in metrics.get("over_refusal", {}).items()
-        if v["model"] in filters["models"] and v["defense"] in filters["defenses"]
-    ]
-    avg_over_ref = np.mean(over_ref_vals) if over_ref_vals else 0
+    all_over_ref = [v["over_refusal_rate"] for v in metrics.get("over_refusal", {}).values()]
+    avg_over_ref = np.mean(all_over_ref) if all_over_ref else 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     cards = [
-        (c1, pct(avg_asr), "Avg Attack Success", "danger" if avg_asr > 0.4 else "warning" if avg_asr > 0.2 else "success", "Across all configs"),
-        (c2, pct(max_asr), "Peak ASR", "danger" if max_asr > 0.5 else "warning", "Worst-case config"),
-        (c3, f"{mean_latency:.1f}", "Mean Detection Turn", "warning", "Avg turns to trigger defense"),
-        (c4, pct(avg_over_ref), "Over-Refusal Rate", "success" if avg_over_ref < 0.1 else "warning", "False positive cost"),
-        (c5, str(n_attack + n_benign), "Total Sequences", "info", f"{n_attack} attack · {n_benign} benign"),
+        (c1, pct(max_asr), "Peak ASR", "danger" if max_asr > 0.5 else "warning", "Worst-case config"),
+        (c2, f"{mean_latency:.1f}", "Mean Detection Turn", "warning", "Avg turns to trigger defense"),
+        (c3, pct(avg_over_ref), "Over-Refusal Rate", "success" if avg_over_ref < 0.1 else "warning", "False positive cost"),
+        (c4, str(n_attack + n_benign), "Total Sequences", "info", f"{n_attack} attack · {n_benign} benign"),
     ]
-    for col, val, label, cls, delta in cards:
+    for col, val, label, card_cls, delta in cards:
         col.markdown(f"""
         <div class="metric-card">
-          <div class="metric-value {cls}">{val}</div>
+          <div class="metric-value {card_cls}">{val}</div>
           <div class="metric-label">{label}</div>
-          <div class="metric-delta" style="color:#484f58;">{delta}</div>
+          <div class="metric-delta" style="color:#6e7781;">{delta}</div>
         </div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
+
+    if not filters_active:
+        st.info("Select at least one model and one defense in the sidebar to see charts.")
+        return
 
     col_left, col_right = st.columns([3, 2])
 
@@ -1162,9 +1177,7 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    if not filters["models"] or not filters["defenses"]:
-        st.warning("Select at least one model and one defense in the sidebar.")
-        return
+    filters_active = bool(filters["models"] and filters["defenses"])
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "  Overview  ",
@@ -1175,13 +1188,22 @@ def main():
     ])
 
     with tab1:
-        tab_overview(metrics, filters)
+        tab_overview(metrics, filters, filters_active)
     with tab2:
-        tab_attack_analysis(metrics, filters)
+        if filters_active:
+            tab_attack_analysis(metrics, filters)
+        else:
+            st.info("Select at least one model and one defense in the sidebar to see charts.")
     with tab3:
-        tab_defense_analysis(metrics, filters)
+        if filters_active:
+            tab_defense_analysis(metrics, filters)
+        else:
+            st.info("Select at least one model and one defense in the sidebar to see charts.")
     with tab4:
-        tab_conversation_explorer(metrics, filters)
+        if filters_active:
+            tab_conversation_explorer(metrics, filters)
+        else:
+            st.info("Select at least one model and one defense in the sidebar to see charts.")
     with tab5:
         tab_cross_run(runs)
 
